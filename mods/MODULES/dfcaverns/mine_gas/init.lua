@@ -247,7 +247,7 @@ minetest.register_lbm({
 	end,
 })
 
-local function lava_within_radius(pos, radius)
+local function lava_within_radius2(pos, radius2)
     local bx, by, bz = math.floor(pos.x/CELL_DIV), math.floor(pos.y/CELL_DIV), math.floor(pos.z/CELL_DIV)
     local span = math.ceil(radius/CELL_DIV)
     for dx = -span, span do
@@ -256,7 +256,7 @@ local function lava_within_radius(pos, radius)
           local cell = lava_cells[(bx+dx).."_"..(by+dy).."_"..(bz+dz)]
           if cell then
             for pk, lpos in pairs(cell.positions) do
-              if vector.distance(pos, lpos) <= radius then
+              if pdist2(pos, lpos) <= radius2 then
                 local n = minetest.get_node_or_nil(lpos)
                 if n == nil then
                     -- block isn't currently loaded — trust the cached entry,
@@ -283,7 +283,7 @@ minetest.register_lbm({
     nodenames = {"mine_gas:gas_seep"},
     run_at_every_load = true,
     action = function(pos, node)
-		if lava_within_radius(pos) then
+		if lava_within_radius2(pos, mine_gas.min_lava_dist2) then
 			minetest.set_node(pos, {name=stone_with_coal})
 		end
 	end,
