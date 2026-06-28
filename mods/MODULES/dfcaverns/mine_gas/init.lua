@@ -203,7 +203,26 @@ local orthogonal = {
 
 local LList = lua_ext.LList
 
-local lava_positions = {first=nil, last=nil, count=0, cleaning=false}
+local CELL_CAP = 64
+local CELL_DIV = 32
+
+local function cell_key_for(pos)
+    return math.floor(pos.x/CELL_DIV).."_"..math.floor(pos.y/CELL_DIV).."_"..math.floor(pos.z/CELL_DIV)
+end
+
+local function add_to_cell(cell, pos, pk)
+	pk = pk or minetest.pos_to_string(pos)
+	cell.positions[pk] = pos
+	cell.count = cell.count + 1
+end
+
+local function remove_from_cell(cell, pos, pk)
+	pk = pk or minetest.pos_to_string(pos)
+	cell.positions[pk] = nil
+	cell.count = cell.count - 1
+end
+
+local lava_cells = {} -- "bx_by_bz" -> { count = n, positions = { [posstring] = pos } }
 
 local active_block_range2 = (16*minetest.settings:get("active_block_range") )^2
 minetest.register_lbm({
@@ -212,26 +231,50 @@ minetest.register_lbm({
     nodenames = {"group:lava"},
     run_at_every_load = true,
     action = function(pos, node)
-		if lava_positions.count >= 500 and not lava_positions.cleaning then
-			lava_positions.cleaning = true
-			minetest.after(10, function()
-			local it = lava_positions.last
-			while it do
-				local dist2 = pdist2(pos, it.value)
-				if dist2 >= active_block_range2 or dist2 < 1 then
-					--clean up duplicates and positions which are too far from current node
-					it = LList.remove(lava_positions, it, true)
-				else
-					it = it.prev
-				end
-			end
-			LList.push(lava_positions, pos)
-			lava_positions.cleaning = false
-			end)
+		local key = cell_key_for(pos)
+        local cell = lava_cells[key]
+		if not cell then
+			cell = { count = 0, positions = {} }
+            lava_cells[key] = cell
 		end
-		LList.push(lava_positions, pos)
+		local pk = minetest.pos_to_string(pos)
+		if cell.positions[pk] -- already tracked
+			then return 
+		end
+        if cell.count < CELL_CAP then
+			add_to_cell(cell, pos, pk)
+		end
 	end,
 })
+
+local function lava_within_radius(pos, radius)
+    local bx, by, bz = math.floor(pos.x/CELL_DIV), math.floor(pos.y/CELL_DIV), math.floor(pos.z/CELL_DIV)
+    local span = math.ceil(radius/CELL_DIV)
+    for dx = -span, span do
+      for dy = -span, span do
+        for dz = -span, span do
+          local cell = lava_cells[(bx+dx).."_"..(by+dy).."_"..(bz+dz)]
+          if cell then
+            for pk, lpos in pairs(cell.positions) do
+              if vector.distance(pos, lpos) <= radius then
+                local n = minetest.get_node_or_nil(lpos)
+                if n == nil then
+                    -- block isn't currently loaded — trust the cached entry,
+                    return true
+                elseif minetest.get_item_group(n.name, "lava") > 0 then
+                    return true
+                else
+                    -- confirmed loaded and no longer lava — actually stale
+                    remove_from_cell(cell, lpos, pk)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+    return false
+end
 
 local stone_with_coal = df_dependencies.node_name_stone_with_coal
 minetest.register_lbm({
@@ -240,14 +283,8 @@ minetest.register_lbm({
     nodenames = {"mine_gas:gas_seep"},
     run_at_every_load = true,
     action = function(pos, node)
-		local it = lava_positions.first
-		while not it == nil do
-			local lava_pos = it.value
-			if pdist2(pos, lava_pos) < mine_gas.min_lava_dist2 then
-				minetest.set_node(pos, {name=stone_with_coal})
-				break
-			end
-			it = it.next
+		if lava_within_radius(pos) then
+			minetest.set_node(pos, {name=stone_with_coal})
 		end
 	end,
 })
